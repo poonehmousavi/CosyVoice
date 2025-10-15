@@ -3,49 +3,31 @@ FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 ARG VENV_NAME="cosyvoice"
 ENV VENV=$VENV_NAME
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
-
-ENV DEBIAN_FRONTEN=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
-SHELL ["/bin/bash", "--login", "-c"]
+SHELL ["/bin/bash", "-lc"]
 
-RUN apt-get update -y --fix-missing
-RUN apt-get install -y git build-essential curl wget ffmpeg unzip git git-lfs sox libsox-dev && \
-    apt-get clean && \
-    git lfs install
+RUN apt-get update -y --fix-missing && \
+    apt-get install -y git build-essential curl wget ffmpeg unzip git-lfs sox libsox-dev && \
+    apt-get clean && git lfs install
 
-# ==================================================================
-# conda install and conda forge channel as default
-# ------------------------------------------------------------------
-# Install miniforge
-RUN wget --quiet https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O ~/miniforge.sh && \
-    /bin/bash ~/miniforge.sh -b -p /opt/conda && \
-    rm ~/miniforge.sh && \
-    ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh && \
-    echo "source /opt/conda/etc/profile.d/conda.sh" >> /opt/nvidia/entrypoint.d/100.conda.sh && \
-    echo "source /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc && \
-    echo "conda activate ${VENV}" >> /opt/nvidia/entrypoint.d/110.conda_default_env.sh && \
-    echo "conda activate ${VENV}" >> $HOME/.bashrc
+# Miniforge
+RUN wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O ~/miniforge.sh && \
+    bash ~/miniforge.sh -b -p /opt/conda && rm ~/miniforge.sh
+ENV PATH="/opt/conda/bin:${PATH}"
 
-ENV PATH /opt/conda/bin:$PATH
-
-RUN conda config --add channels conda-forge && \
-    conda config --set channel_priority strict
-# ------------------------------------------------------------------
-# ~conda
-# ==================================================================
-
+RUN conda config --add channels conda-forge && conda config --set channel_priority strict
 RUN conda create -y -n ${VENV} python=3.10
-ENV CONDA_DEFAULT_ENV=${VENV}
-ENV PATH /opt/conda/bin:/opt/conda/envs/${VENV}/bin:$PATH
+ENV PATH="/opt/conda/envs/${VENV}/bin:/opt/conda/bin:${PATH}"
 
-WORKDIR /workspace
+# Optional extras
+RUN conda run -n ${VENV} conda install -y -c conda-forge pynini==2.1.5
 
-ENV PYTHONPATH="${PYTHONPATH}:/workspace/CosyVoice:/workspace/CosyVoice/third_party/Matcha-TTS"
+# Work in /code (this will be bind-mounted at runtime)
+WORKDIR /code
+ENV PYTHONPATH="/code:/code/third_party/Matcha-TTS"
 
-RUN git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git
-
-RUN conda activate ${VENV} && conda install -y -c conda-forge pynini==2.1.5
-RUN conda activate ${VENV} && cd CosyVoice && \
-    pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host=mirrors.aliyun.com --no-cache-dir
-
-WORKDIR /workspace/CosyVoice
+# Install deps when the code is mounted
+# (requirements.txt must exist in the mounted repo)
+RUN echo '#!/bin/bash\nset -e\npip install -r requirements.txt --no-cache-dir' > /usr/local/bin/install_deps && \
+    chmod +x /usr/local/bin/install_deps
